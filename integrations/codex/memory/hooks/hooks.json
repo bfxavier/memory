@@ -1,0 +1,125 @@
+{
+  "description": "Capture and recall local memory without blocking Codex",
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "startup|resume|clear|compact",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "memory hook codex SessionStart",
+            "commandWindows": "memory.exe hook codex SessionStart",
+            "timeout": 1,
+            "additionalContextLimit": 6000
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "memory hook codex UserPromptSubmit",
+            "commandWindows": "memory.exe hook codex UserPromptSubmit",
+            "timeout": 1,
+            "additionalContextLimit": 6000
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": ".*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "memory hook codex PostToolUse",
+            "commandWindows": "memory.exe hook codex PostToolUse",
+            "timeout": 1,
+            "async": true
+          }
+        ]
+      }
+    ],
+    "PreCompact": [
+      {
+        "matcher": "manual|auto",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "memory hook codex PreCompact",
+            "commandWindows": "memory.exe hook codex PreCompact",
+            "timeout": 1
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "memory hook codex Stop",
+            "commandWindows": "memory.exe hook codex Stop",
+            "timeout": 1,
+            "async": true
+          }
+        ]
+      }
+    ],
+    "Interrupt": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "memory hook codex Interrupt",
+            "commandWindows": "memory.exe hook codex Interrupt",
+            "timeout": 1
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "matcher": "other",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "memory hook codex SessionEnd",
+            "commandWindows": "memory.exe hook codex SessionEnd",
+            "timeout": 1
+          }
+        ]
+      }
+    ],
+    "SubagentStart": [
+      {
+        "matcher": ".*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "memory hook codex SubagentStart",
+            "commandWindows": "memory.exe hook codex SubagentStart",
+            "timeout": 1,
+            "additionalContextLimit": 6000
+          }
+        ]
+      }
+    ],
+    "SubagentStop": [
+      {
+        "matcher": ".*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "memory hook codex SubagentStop",
+            "commandWindows": "memory.exe hook codex SubagentStop",
+            "timeout": 1,
+            "async": true
+          }
+        ]
+      }
+    ]
+  }
+}

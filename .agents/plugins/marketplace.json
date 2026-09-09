@@ -1,0 +1,20 @@
+{
+  "name": "memory-local",
+  "interface": {
+    "displayName": "Memory"
+  },
+  "plugins": [
+    {
+      "name": "memory",
+      "source": {
+        "source": "local",
+        "path": "./integrations/codex/memory"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Productivity"
+    }
+  ]
+}

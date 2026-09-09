@@ -1,0 +1,25 @@
+{
+  "name": "memory",
+  "version": "0.2.0+codex.20260909115252",
+  "description": "Local-first persistent memory for coding agents",
+  "author": {
+    "name": "Bruno Xavier"
+  },
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Memory",
+    "shortDescription": "Local memory across coding sessions.",
+    "longDescription": "Capture and recall durable project decisions, facts, failures, and preferences without a hosted subscription.",
+    "developerName": "Bruno Xavier",
+    "category": "Productivity",
+    "capabilities": [
+      "Write"
+    ],
+    "defaultPrompt": [
+      "Search memory for prior decisions in this project.",
+      "Show recent project memories.",
+      "Remember this decision for future sessions."
+    ]
+  },
+  "mcpServers": "./.mcp.json"
+}
