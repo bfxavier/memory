@@ -2,6 +2,7 @@ package mcpserver
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 
 	"github.com/bfxavier/memory/internal/model"
@@ -64,6 +65,7 @@ func TestMCPMemoryLifecycle(t *testing.T) {
 	if len(memories) != 1 {
 		t.Fatalf("stored memories = %d, want 1", len(memories))
 	}
+	remembered := memories[0]
 
 	result, err = clientSession.CallTool(ctx, &mcp.CallToolParams{
 		Name:      "memory_search",
@@ -74,5 +76,27 @@ func TestMCPMemoryLifecycle(t *testing.T) {
 	}
 	if result.IsError || len(result.Content) == 0 {
 		t.Fatalf("search returned no content: %#v", result)
+	}
+
+	result, err = clientSession.CallTool(ctx, &mcp.CallToolParams{
+		Name:      "memory_forget",
+		Arguments: map[string]any{"id": remembered.ID},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.IsError {
+		t.Fatalf("forget returned an MCP error: %#v", result.Content)
+	}
+	encoded, err := json.Marshal(result.StructuredContent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var forgotten MutationOutput
+	if err := json.Unmarshal(encoded, &forgotten); err != nil {
+		t.Fatal(err)
+	}
+	if !forgotten.Changed || forgotten.Memory.ID != remembered.ID || forgotten.Memory.Content != remembered.Content || forgotten.Memory.State != "retracted" {
+		t.Fatalf("unexpected forget response: %#v", forgotten)
 	}
 }

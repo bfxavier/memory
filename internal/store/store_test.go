@@ -90,15 +90,12 @@ func TestMemoryLifecycleAndSearch(t *testing.T) {
 	if stillActive.State != "active" {
 		t.Fatalf("identical correction changed state to %q", stillActive.State)
 	}
-	if err := database.Forget(corrected.ID); err != nil {
-		t.Fatal(err)
-	}
-	forgotten, err := database.Get(corrected.ID)
+	forgotten, err := database.Forget(corrected.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if forgotten.State != "retracted" {
-		t.Fatalf("forgotten state = %q, want retracted", forgotten.State)
+	if forgotten.ID != corrected.ID || forgotten.Content != corrected.Content || forgotten.State != "retracted" {
+		t.Fatalf("unexpected forgotten memory: %#v", forgotten)
 	}
 	if err := database.Integrity(context.Background()); err != nil {
 		t.Fatal(err)

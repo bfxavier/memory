@@ -48,10 +48,11 @@ func runForget(args []string, appPaths paths.Paths, output io.Writer) error {
 		return err
 	}
 	defer database.Close()
-	if err := database.Forget(args[0]); err != nil {
+	memory, err := database.Forget(args[0])
+	if err != nil {
 		return err
 	}
-	return writeJSON(output, map[string]any{"changed": true, "id": args[0]})
+	return writeJSON(output, memory)
 }
 
 func runCorrect(args []string, appPaths paths.Paths, output io.Writer) error {

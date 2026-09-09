@@ -53,6 +53,13 @@ func TestMemoryCommands(t *testing.T) {
 	if err := run([]string{"forget", corrected.ID}, bytes.NewReader(nil), &output); err != nil {
 		t.Fatal(err)
 	}
+	var forgotten model.Memory
+	if err := json.Unmarshal(output.Bytes(), &forgotten); err != nil {
+		t.Fatal(err)
+	}
+	if forgotten.ID != corrected.ID || forgotten.Content != corrected.Content || forgotten.State != "retracted" {
+		t.Fatalf("unexpected forgotten memory: %#v", forgotten)
+	}
 	output.Reset()
 	if err := run([]string{"inspect", corrected.ID}, bytes.NewReader(nil), &output); err != nil {
 		t.Fatal(err)

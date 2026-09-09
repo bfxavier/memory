@@ -58,8 +58,8 @@ func registerWriteTools(server *mcp.Server, database *store.Store) {
 	mcp.AddTool(server, &mcp.Tool{
 		Name: "memory_forget", Description: "Retract a memory without destroying its provenance.", Annotations: writeOnly("Forget memory", true),
 	}, func(_ context.Context, _ *mcp.CallToolRequest, input GetInput) (*mcp.CallToolResult, MutationOutput, error) {
-		err := database.Forget(input.ID)
-		return nil, MutationOutput{Changed: err == nil}, err
+		memory, err := database.Forget(input.ID)
+		return nil, MutationOutput{Changed: err == nil, Memory: view(memory)}, err
 	})
 
 	mcp.AddTool(server, &mcp.Tool{

@@ -17,19 +17,31 @@ func (s *Store) Remember(memory model.Memory) (model.Memory, error) {
 	return writeMemory(s.db, prepared)
 }
 
-func (s *Store) Forget(id string) error {
-	result, err := s.db.Exec(`UPDATE memories SET state = 'retracted', updated_at = ? WHERE id = ?`, time.Now().UTC().UnixMilli(), id)
+func (s *Store) Forget(id string) (model.Memory, error) {
+	transaction, err := s.db.Begin()
 	if err != nil {
-		return err
+		return model.Memory{}, err
+	}
+	defer transaction.Rollback()
+	result, err := transaction.Exec(`UPDATE memories SET state = 'retracted', updated_at = ? WHERE id = ?`, time.Now().UTC().UnixMilli(), id)
+	if err != nil {
+		return model.Memory{}, err
 	}
 	changed, err := result.RowsAffected()
 	if err != nil {
-		return err
+		return model.Memory{}, err
 	}
 	if changed == 0 {
-		return sql.ErrNoRows
+		return model.Memory{}, sql.ErrNoRows
 	}
-	return nil
+	memory, err := scanMemory(transaction.QueryRow(memorySelect+` WHERE id = ?`, id))
+	if err != nil {
+		return model.Memory{}, err
+	}
+	if err := transaction.Commit(); err != nil {
+		return model.Memory{}, err
+	}
+	return memory, nil
 }
 
 func (s *Store) Correct(id, replacement string) (model.Memory, error) {
