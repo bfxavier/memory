@@ -1,6 +1,6 @@
 {
   "name": "memory",
-  "version": "0.2.0+codex.20260909115252",
+  "version": "0.2.0+codex.20260909133913",
   "description": "Local-first persistent memory for coding agents",
   "author": {
     "name": "Bruno Xavier"
