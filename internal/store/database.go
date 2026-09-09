@@ -55,7 +55,7 @@ func dsn(path string, readOnly bool) string {
 	if absolute, err := filepath.Abs(path); err == nil {
 		path = absolute
 	}
-	location := url.URL{Scheme: "file", Path: filepath.ToSlash(path)}
+	location := url.URL{Scheme: "file", Path: sqliteFilePath(path)}
 	query := location.Query()
 	query.Add("_pragma", "busy_timeout(50)")
 	query.Add("_pragma", "foreign_keys(1)")
@@ -67,4 +67,12 @@ func dsn(path string, readOnly bool) string {
 	}
 	location.RawQuery = query.Encode()
 	return location.String()
+}
+
+func sqliteFilePath(path string) string {
+	path = filepath.ToSlash(path)
+	if len(path) >= 2 && path[1] == ':' {
+		path = "/" + path
+	}
+	return path
 }
