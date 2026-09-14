@@ -28,7 +28,6 @@ const (
 	weightProject    = 0.1
 	recencyHalfLife  = 30 * 24 * time.Hour
 	maxQueryTerms    = 16
-	maxCoveringRows  = 5000
 	idLookupChunk    = 400
 )
 
@@ -159,9 +158,6 @@ func coveringRows(matched map[int64]int, excluded map[int64]bool, terms int, min
 		}
 		return rows[first] > rows[second]
 	})
-	if len(rows) > maxCoveringRows {
-		rows = rows[:maxCoveringRows]
-	}
 	return rows
 }
 

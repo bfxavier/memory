@@ -261,7 +261,7 @@ func TestOtherProjectsCannotCrowdOutThisProjectsMatches(t *testing.T) {
 		ProjectID: project, Kind: "fact",
 		Content: "clickhouse reader grant for the data platform",
 	})
-	for index := 0; index < maxCoveringRows*2; index++ {
+	for index := 0; index < 400; index++ {
 		remember(t, database, model.Memory{
 			ProjectID: "project-b", Kind: "fact",
 			Content: fmt.Sprintf("clickhouse reader grant elsewhere %d", index),
@@ -280,7 +280,7 @@ func TestExcludedMatchesCannotCrowdOutTheRest(t *testing.T) {
 		Content: "clickhouse reader grant for the data platform",
 	})
 	excluded := []string{}
-	for index := 0; index < maxCoveringRows*2; index++ {
+	for index := 0; index < 400; index++ {
 		memory := remember(t, database, model.Memory{
 			ProjectID: project, Kind: "fact",
 			Content: fmt.Sprintf("clickhouse reader grant seen %d", index),
@@ -327,5 +327,31 @@ func TestConfidenceOutranksRecencyAcrossALargeTiedSet(t *testing.T) {
 	results := search(t, database, "clickhouse reader grant", 0.5)
 	if len(results) == 0 || results[0].ID != best.ID {
 		t.Fatalf("the highest-confidence match lost to newer ties: %s", contents(results))
+	}
+}
+
+func TestCoveringRowsKeepsEveryQualifyingRow(t *testing.T) {
+	const qualifying = 50000
+	matched := map[int64]int{}
+	for row := int64(1); row <= qualifying; row++ {
+		matched[row] = 2
+	}
+	matched[qualifying+1] = 1
+	matched[qualifying+2] = 2
+
+	rows := coveringRows(matched, map[int64]bool{qualifying + 2: true}, 4, 0.5)
+
+	if len(rows) != qualifying {
+		t.Fatalf("coveringRows returned %d of %d qualifying rows; it truncates before ranking", len(rows), qualifying)
+	}
+	seen := map[int64]bool{}
+	for _, row := range rows {
+		seen[row] = true
+	}
+	if seen[qualifying+1] {
+		t.Fatal("a row below the coverage floor qualified")
+	}
+	if seen[qualifying+2] {
+		t.Fatal("an excluded row qualified")
 	}
 }
