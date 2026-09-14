@@ -119,7 +119,7 @@ Both adapters produce the same internal events. Adapter code owns input normaliz
 ### `SessionStart`
 
 - Resolve the project from the Git root and canonical remote when available.
-- Return a compact project briefing from existing memories.
+- Return a compact project briefing while it can be the project's complete active memory, and nothing once the project outgrows it. This hook fires before the task is known, so recency is its only ordering, and a recency sample of a mature project is noise.
 - Process no backlog and call no model.
 - Hard output budget: 1,500 tokens.
 
@@ -185,8 +185,10 @@ Do not store an assistant hypothesis as a fact. Prefer user statements, successf
 V1 uses SQLite FTS5 plus deterministic ranking:
 
 ```text
-score = lexical relevance + confidence + project match + recency decay + user-pinned boost
+score = term coverage + lexical relevance + confidence + project match + recency decay + user-pinned boost
 ```
+
+Term coverage is the fraction of the prompt's searchable terms a memory carries, and it leads the sum: FTS5 matches any one term, so without it a memory sharing a single common word outranks one sharing every word. It is also the floor. The user-pinned boost is not built, because no pin exists yet.
 
 Return a small diversified set. Avoid injecting five versions of the same fact. Track injected memory IDs per session so context is not repeated.
 

@@ -65,7 +65,11 @@ Defaults cap extraction at 12 jobs per hour, 48 KiB of event input, 2,048 output
 
 Each extraction compares new events with up to 64 active memories from the same project. A direct replacement or contradiction creates a new active memory and atomically marks the old memory as superseded. Superseded and retracted memories remain available for audit but are excluded from normal search and hook recall.
 
-Session and subagent start hooks inject a grouped digest of up to 12 active project memories. A successful SessionStart lookup with no project history injects an explicit empty-project marker. Prompt hooks use FTS5 to inject up to six query-relevant active memories. Both paths are local, bounded to 6,000 bytes, and make no model or network call.
+Session and subagent start hooks inject a grouped digest of the project's active memories, but only while the project holds 12 at most, so the digest is all of it. Past that the start hooks stay silent: they run before any task is known, so the only ordering available to them is recency, and the most recently written memory is not the one the next task needs. A successful SessionStart lookup with no project history injects an explicit empty-project marker.
+
+Prompt hooks use FTS5 to inject up to six query-relevant active memories. A candidate must carry at least half of the prompt's searchable terms, and a prompt left with no searchable terms recalls nothing rather than falling back to recent memories. Ranking is term coverage first, then lexical score, confidence, a 30-day recency half-life, and a project-match boost. Memories already injected into a session are not repeated to its later prompts.
+
+Both paths are local, bounded to 6,000 bytes, and make no model or network call.
 
 For another OpenAI-compatible endpoint:
 
