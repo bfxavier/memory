@@ -557,3 +557,11 @@ func TestSecondPromptReturnsTheMatchesBelowTheFirstCut(t *testing.T) {
 		t.Fatalf("second prompt surfaced nothing new: %d of %d seen", len(seen), len(stored))
 	}
 }
+
+func TestInjectionHistoryOutlastsAnyRealSession(t *testing.T) {
+	const promptsInALongSession = 1000
+	if maxTrackedInjections < promptRecallLimit*promptsInALongSession {
+		t.Fatalf("history holds %d ids, a %d-prompt session can inject %d",
+			maxTrackedInjections, promptsInALongSession, promptRecallLimit*promptsInALongSession)
+	}
+}

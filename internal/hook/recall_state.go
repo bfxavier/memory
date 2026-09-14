@@ -10,14 +10,8 @@ import (
 	"github.com/bfxavier/memory/internal/paths"
 )
 
-// A session must not be re-shown a memory, so the list has to outlast the
-// session rather than the file. At six per prompt this covers well over a
-// thousand prompts, and only bounds a runaway.
 const maxTrackedInjections = 10000
 
-// The ids a session has already been shown, so search can exclude them while
-// selecting candidates. Filtering after the limit would shrink the result to
-// nothing instead of refilling it from the matches below the cut.
 func alreadyInjected(appPaths paths.Paths, sessionID string) []string {
 	path := injectionLogPath(appPaths, sessionID)
 	if path == "" {

@@ -63,9 +63,6 @@ func (s *Store) Search(ctx context.Context, query string, options model.SearchOp
 	return rank(candidates, options, clampLimit(options.Limit)), nil
 }
 
-// Every filter that decides eligibility runs before the cap. Counting over
-// rows the caller cannot receive, then capping, would let ineligible rows
-// crowd out eligible ones and return nothing while matches remain.
 func (s *Store) matchedTermCounts(ctx context.Context, terms []string, options model.SearchOptions) (map[int64]int, error) {
 	conditions := []string{"memories_fts MATCH ?", "m.state = 'active'"}
 	scope := []any{}

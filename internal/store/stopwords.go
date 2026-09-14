@@ -1,9 +1,5 @@
 package store
 
-// Grammatical function words. A word that names a language, build tool or HTTP
-// verb is left searchable even though it reads like filler in English, because
-// "use Go" and "the make target" are real questions. A word nobody would search
-// for on its own stays here.
 var stopWords = map[string]bool{
 	"a": true, "about": true, "after": true, "again": true, "all": true, "also": true,
 	"am": true, "an": true, "and": true, "any": true, "are": true, "as": true, "at": true,
