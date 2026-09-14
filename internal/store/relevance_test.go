@@ -178,3 +178,30 @@ func TestDiacriticsFoldLikeTheSearchIndex(t *testing.T) {
 		t.Fatalf("accented term did not count toward coverage: %s", contents(results))
 	}
 }
+
+func TestLanguageAndToolNamesSurviveStopWordRemoval(t *testing.T) {
+	database := seeded(t, map[string]string{
+		"go":   "Use Go for this repository",
+		"make": "The make target rebuilds the plugin bundle",
+		"http": "The webhook endpoint accepts PUT and GET",
+	})
+	for query, want := range map[string]string{
+		"Should we use Go?":             "Use Go for this repository",
+		"can you make the bundle again": "The make target rebuilds the plugin bundle",
+		"does the endpoint take a PUT":  "The webhook endpoint accepts PUT and GET",
+	} {
+		results := search(t, database, query, 0.5)
+		if len(results) == 0 || results[0].Content != want {
+			t.Fatalf("%q did not recall %q: %s", query, want, contents(results))
+		}
+	}
+}
+
+func TestConversationalFillerStillRecallsNothing(t *testing.T) {
+	database := seeded(t, map[string]string{
+		"unrelated": "Do not grant the reader role to a person, only to a group",
+	})
+	if results := search(t, database, "what should we do about this", 0.5); len(results) != 0 {
+		t.Fatalf("filler prompt recalled %s", contents(results))
+	}
+}

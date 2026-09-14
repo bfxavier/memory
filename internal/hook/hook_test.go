@@ -475,3 +475,38 @@ func TestClipRunesNeverSplitsACharacter(t *testing.T) {
 		}
 	}
 }
+
+func TestSubagentStartStillReceivesMemoryTheParentSessionSaw(t *testing.T) {
+	appPaths := testPaths(t)
+	if err := appPaths.Ensure(); err != nil {
+		t.Fatal(err)
+	}
+	database, err := store.Open(appPaths.Database)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resolved := project.Resolve(t.TempDir())
+	memory, err := database.Remember(model.Memory{
+		ProjectID: resolved.ID, Kind: "decision", Content: "Use SQLite FTS5 for recall",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	database.Close()
+
+	var start, prompt, subagent bytes.Buffer
+	Execute("codex", "SessionStart", bytes.NewReader(hookInput("SessionStart", resolved.Root, nil)), &start, appPaths)
+	Execute("codex", "UserPromptSubmit", bytes.NewReader(
+		hookInput("UserPromptSubmit", resolved.Root, map[string]any{"prompt": "Which SQLite recall should we use?"})), &prompt, appPaths)
+	Execute("codex", "SubagentStart", bytes.NewReader(hookInput("SubagentStart", resolved.Root, nil)), &subagent, appPaths)
+
+	if !strings.Contains(start.String(), memory.ID) {
+		t.Fatalf("session start digest missing the memory: %s", start.String())
+	}
+	if !strings.Contains(prompt.String(), memory.ID) {
+		t.Fatalf("prompt recall missing the memory: %s", prompt.String())
+	}
+	if !strings.Contains(subagent.String(), memory.ID) {
+		t.Fatalf("subagent start was starved by the parent session: %s", subagent.String())
+	}
+}

@@ -1,5 +1,9 @@
 package store
 
+// Grammatical function words. A word that names a language, build tool or HTTP
+// verb is left searchable even though it reads like filler in English, because
+// "use Go" and "the make target" are real questions. A word nobody would search
+// for on its own stays here.
 var stopWords = map[string]bool{
 	"a": true, "about": true, "after": true, "again": true, "all": true, "also": true,
 	"am": true, "an": true, "and": true, "any": true, "are": true, "as": true, "at": true,
@@ -7,15 +11,15 @@ var stopWords = map[string]bool{
 	"both": true, "but": true, "by": true, "can": true, "could": true, "did": true,
 	"do": true, "does": true, "doing": true, "done": true, "down": true, "each": true,
 	"even": true, "every": true, "far": true, "few": true, "for": true, "from": true,
-	"get": true, "go": true, "had": true, "has": true, "have": true, "having": true,
+	"had": true, "has": true, "have": true, "having": true,
 	"he": true, "her": true, "here": true, "hers": true, "him": true, "his": true,
 	"how": true, "i": true, "if": true, "in": true, "into": true, "is": true, "it": true,
-	"its": true, "just": true, "let": true, "like": true, "make": true, "many": true,
+	"its": true, "just": true, "let": true, "like": true, "many": true,
 	"may": true, "me": true, "might": true, "more": true, "most": true, "much": true,
 	"must": true, "my": true, "need": true, "no": true, "not": true, "now": true,
 	"of": true, "off": true, "on": true, "once": true, "one": true, "only": true,
 	"or": true, "other": true, "our": true, "out": true, "over": true, "own": true,
-	"please": true, "put": true, "same": true, "see": true, "she": true, "should": true,
+	"please": true, "same": true, "see": true, "she": true, "should": true,
 	"so": true, "some": true, "still": true, "such": true, "sure": true, "take": true,
 	"than": true, "that": true, "the": true, "their": true, "them": true, "then": true,
 	"there": true, "these": true, "they": true, "thing": true, "things": true,

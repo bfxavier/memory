@@ -81,7 +81,10 @@ func Execute(agent, eventName string, input io.Reader, output io.Writer, appPath
 	if injectsContext(eventName) {
 		memories, recalled := recall(raw, eventName, resolvedProject.ID, appPaths.Database)
 		if recalled {
-			fresh := suppressRepeats(appPaths, sessionID, memories)
+			fresh := memories
+			if eventName == "UserPromptSubmit" {
+				fresh = suppressRepeats(appPaths, sessionID, memories)
+			}
 			emptyProject := eventName == "SessionStart" && len(memories) == 0
 			contextText, rendered := renderContext(fresh)
 			if len(rendered) > 0 || emptyProject {
@@ -94,7 +97,9 @@ func Execute(agent, eventName string, input io.Reader, output io.Writer, appPath
 				if data, marshalErr := json.Marshal(response); marshalErr == nil {
 					_, _ = output.Write(data)
 					wroteOutput = true
-					recordInjections(appPaths, sessionID, rendered)
+					if eventName == "UserPromptSubmit" {
+						recordInjections(appPaths, sessionID, rendered)
+					}
 					return
 				}
 			}
