@@ -397,3 +397,16 @@ func TestAllProjectSearchDoesNotBoostProjectMemories(t *testing.T) {
 		t.Fatalf("an unrequested project outranked a more confident global memory: %s", contents(results))
 	}
 }
+
+func TestNonLatinAccentsAreLeftToTheSearchIndex(t *testing.T) {
+	database := seeded(t, map[string]string{
+		"greek": "Ο διακομιστής Αθήνα εκτελεί τη μετάβαση",
+		"latin": "the cafe deployment runs in Zurich",
+	})
+	if results := search(t, database, "Αθήνα διακομιστής", 0.5); len(results) != 1 {
+		t.Fatalf("an exact non-Latin query lost its own memory: %s", contents(results))
+	}
+	if results := search(t, database, "café", 0.5); len(results) != 1 {
+		t.Fatalf("the index no longer folds Latin accents: %s", contents(results))
+	}
+}
