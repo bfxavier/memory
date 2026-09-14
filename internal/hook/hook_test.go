@@ -510,3 +510,50 @@ func TestSubagentStartStillReceivesMemoryTheParentSessionSaw(t *testing.T) {
 		t.Fatalf("subagent start was starved by the parent session: %s", subagent.String())
 	}
 }
+
+func TestSecondPromptReturnsTheMatchesBelowTheFirstCut(t *testing.T) {
+	appPaths := testPaths(t)
+	if err := appPaths.Ensure(); err != nil {
+		t.Fatal(err)
+	}
+	database, err := store.Open(appPaths.Database)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resolved := project.Resolve(t.TempDir())
+	stored := map[string]bool{}
+	for index := 0; index < promptRecallLimit*2; index++ {
+		memory, rememberErr := database.Remember(model.Memory{
+			ProjectID: resolved.ID, Kind: "fact",
+			Content: fmt.Sprintf("clickhouse reader grant number %d", index),
+		})
+		if rememberErr != nil {
+			t.Fatal(rememberErr)
+		}
+		stored[memory.ID] = true
+	}
+	database.Close()
+
+	prompt := map[string]any{"prompt": "clickhouse reader grant"}
+	seen := map[string]bool{}
+	for round := 0; round < 2; round++ {
+		var output bytes.Buffer
+		Execute("codex", "UserPromptSubmit", bytes.NewReader(hookInput("UserPromptSubmit", resolved.Root, prompt)), &output, appPaths)
+		found := 0
+		for id := range stored {
+			if strings.Contains(output.String(), id) {
+				if seen[id] {
+					t.Fatalf("round %d repeated memory %s", round, id)
+				}
+				seen[id] = true
+				found++
+			}
+		}
+		if found == 0 {
+			t.Fatalf("round %d recalled nothing while %d matches remained unseen", round, len(stored)-len(seen))
+		}
+	}
+	if len(seen) <= promptRecallLimit {
+		t.Fatalf("second prompt surfaced nothing new: %d of %d seen", len(seen), len(stored))
+	}
+}

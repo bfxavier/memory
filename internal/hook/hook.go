@@ -79,14 +79,10 @@ func Execute(agent, eventName string, input io.Reader, output io.Writer, appPath
 	}
 
 	if injectsContext(eventName) {
-		memories, recalled := recall(raw, eventName, resolvedProject.ID, appPaths.Database)
+		memories, recalled := recall(raw, eventName, sessionID, resolvedProject.ID, appPaths)
 		if recalled {
-			fresh := memories
-			if eventName == "UserPromptSubmit" {
-				fresh = suppressRepeats(appPaths, sessionID, memories)
-			}
 			emptyProject := eventName == "SessionStart" && len(memories) == 0
-			contextText, rendered := renderContext(fresh)
+			contextText, rendered := renderContext(memories)
 			if len(rendered) > 0 || emptyProject {
 				response := map[string]any{
 					"hookSpecificOutput": map[string]any{
@@ -127,10 +123,10 @@ func injectsContext(eventName string) bool {
 	return eventName == "SessionStart" || eventName == "SubagentStart" || eventName == "UserPromptSubmit"
 }
 
-func recall(raw map[string]any, eventName, projectID, databasePath string) ([]model.Memory, bool) {
+func recall(raw map[string]any, eventName, sessionID, projectID string, appPaths paths.Paths) ([]model.Memory, bool) {
 	ctx, cancel := context.WithTimeout(context.Background(), recallTimeout)
 	defer cancel()
-	database, err := store.OpenReadOnly(databasePath)
+	database, err := store.OpenReadOnly(appPaths.Database)
 	if err != nil {
 		return nil, false
 	}
@@ -141,6 +137,7 @@ func recall(raw map[string]any, eventName, projectID, databasePath string) ([]mo
 			ProjectID:   projectID,
 			Limit:       promptRecallLimit,
 			MinCoverage: promptMinCoverage,
+			ExcludeIDs:  alreadyInjected(appPaths, sessionID),
 		})
 		if searchErr != nil {
 			return nil, false

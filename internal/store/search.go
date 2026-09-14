@@ -73,7 +73,7 @@ func (s *Store) Search(ctx context.Context, query string, options model.SearchOp
 	if err != nil {
 		return nil, err
 	}
-	return rank(candidates, terms, options.MinCoverage, limit), nil
+	return rank(candidates, terms, options, limit), nil
 }
 
 func (s *Store) Recent(ctx context.Context, options model.SearchOptions) ([]model.Memory, error) {
@@ -132,7 +132,11 @@ func (s *Store) All(ctx context.Context) ([]model.Memory, error) {
 	return scanMemories(rows)
 }
 
-func rank(candidates []model.Memory, terms []string, minCoverage float64, limit int) []model.Memory {
+func rank(candidates []model.Memory, terms []string, options model.SearchOptions, limit int) []model.Memory {
+	excluded := make(map[string]bool, len(options.ExcludeIDs))
+	for _, id := range options.ExcludeIDs {
+		excluded[id] = true
+	}
 	maxLexical := 0.0
 	for _, candidate := range candidates {
 		if candidate.Score > maxLexical {
@@ -142,8 +146,11 @@ func rank(candidates []model.Memory, terms []string, minCoverage float64, limit 
 	now := time.Now()
 	ranked := make([]model.Memory, 0, len(candidates))
 	for _, candidate := range candidates {
+		if excluded[candidate.ID] {
+			continue
+		}
 		matched := coverage(candidate, terms)
-		if matched < minCoverage {
+		if matched < options.MinCoverage {
 			continue
 		}
 		candidate.Score = relevance(candidate, matched, maxLexical, now)

@@ -12,27 +12,15 @@ import (
 
 const maxTrackedInjections = 200
 
-func suppressRepeats(appPaths paths.Paths, sessionID string, memories []model.Memory) []model.Memory {
+// The ids a session has already been shown, so search can exclude them while
+// selecting candidates. Filtering after the limit would shrink the result to
+// nothing instead of refilling it from the matches below the cut.
+func alreadyInjected(appPaths paths.Paths, sessionID string) []string {
 	path := injectionLogPath(appPaths, sessionID)
 	if path == "" {
-		return memories
+		return nil
 	}
-	injected := loadInjections(path)
-	if len(injected) == 0 {
-		return memories
-	}
-	seen := make(map[string]bool, len(injected))
-	for _, id := range injected {
-		seen[id] = true
-	}
-	remaining := make([]model.Memory, 0, len(memories))
-	for _, memory := range memories {
-		if seen[memory.ID] {
-			continue
-		}
-		remaining = append(remaining, memory)
-	}
-	return remaining
+	return loadInjections(path)
 }
 
 func recordInjections(appPaths paths.Paths, sessionID string, memories []model.Memory) {

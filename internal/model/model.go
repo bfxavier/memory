@@ -47,6 +47,7 @@ type SearchOptions struct {
 	Kinds       []string
 	Limit       int
 	MinCoverage float64
+	ExcludeIDs  []string
 }
 
 type Stats struct {
