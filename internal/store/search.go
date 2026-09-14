@@ -29,6 +29,7 @@ const (
 	recencyHalfLife  = 30 * 24 * time.Hour
 	maxQueryTerms    = 16
 	maxCoveringRows  = 200
+	idLookupChunk    = 400
 )
 
 type scanner interface {
@@ -40,15 +41,19 @@ func (s *Store) Search(ctx context.Context, query string, options model.SearchOp
 	if len(terms) == 0 {
 		return []model.Memory{}, nil
 	}
-	matched, err := s.matchedTermCounts(ctx, terms)
+	matched, err := s.matchedTermCounts(ctx, terms, options)
 	if err != nil {
 		return nil, err
 	}
-	rows := coveringRows(matched, len(terms), options.MinCoverage)
+	excluded, err := s.rowsForIDs(ctx, options.ExcludeIDs)
+	if err != nil {
+		return nil, err
+	}
+	rows := coveringRows(matched, excluded, len(terms), options.MinCoverage)
 	if len(rows) == 0 {
 		return []model.Memory{}, nil
 	}
-	candidates, err := s.memoriesByRow(ctx, terms, rows, options)
+	candidates, err := s.memoriesByRow(ctx, terms, rows)
 	if err != nil {
 		return nil, err
 	}
@@ -58,14 +63,30 @@ func (s *Store) Search(ctx context.Context, query string, options model.SearchOp
 	return rank(candidates, options, clampLimit(options.Limit)), nil
 }
 
-// Coverage decides which memories are eligible, so it is computed over every
-// row each term reaches before any window is applied. Ranking by lexical score
-// first and cutting to a window would let low-coverage rows bury a full match.
-func (s *Store) matchedTermCounts(ctx context.Context, terms []string) (map[int64]int, error) {
+// Every filter that decides eligibility runs before the cap. Counting over
+// rows the caller cannot receive, then capping, would let ineligible rows
+// crowd out eligible ones and return nothing while matches remain.
+func (s *Store) matchedTermCounts(ctx context.Context, terms []string, options model.SearchOptions) (map[int64]int, error) {
+	conditions := []string{"memories_fts MATCH ?", "m.state = 'active'"}
+	scope := []any{}
+	if options.ProjectID != "" {
+		conditions = append(conditions, "(m.project_id = ? OR m.project_id = '')")
+		scope = append(scope, options.ProjectID)
+	}
+	if len(options.Kinds) > 0 {
+		conditions = append(conditions, "m.kind IN ("+placeholders(len(options.Kinds))+")")
+		for _, kind := range options.Kinds {
+			scope = append(scope, kind)
+		}
+	}
+	statement := `
+        SELECT m.rowid FROM memories_fts
+        JOIN memories m ON m.rowid = memories_fts.rowid
+        WHERE ` + strings.Join(conditions, " AND ")
 	matched := map[int64]int{}
 	for _, term := range terms {
-		rows, err := s.db.QueryContext(ctx,
-			`SELECT rowid FROM memories_fts WHERE memories_fts MATCH ?`, `"`+term+`"`)
+		arguments := append([]any{`"` + term + `"`}, scope...)
+		rows, err := s.db.QueryContext(ctx, statement, arguments...)
 		if err != nil {
 			return nil, err
 		}
@@ -77,16 +98,50 @@ func (s *Store) matchedTermCounts(ctx context.Context, terms []string) (map[int6
 			}
 			matched[row]++
 		}
-		if err := rows.Err(); err != nil {
-			rows.Close()
+		err = rows.Err()
+		rows.Close()
+		if err != nil {
 			return nil, err
 		}
-		rows.Close()
 	}
 	return matched, nil
 }
 
-func coveringRows(matched map[int64]int, terms int, minCoverage float64) []int64 {
+func (s *Store) rowsForIDs(ctx context.Context, ids []string) (map[int64]bool, error) {
+	excluded := map[int64]bool{}
+	for start := 0; start < len(ids); start += idLookupChunk {
+		end := start + idLookupChunk
+		if end > len(ids) {
+			end = len(ids)
+		}
+		chunk := ids[start:end]
+		arguments := make([]any, len(chunk))
+		for index, id := range chunk {
+			arguments[index] = id
+		}
+		rows, err := s.db.QueryContext(ctx,
+			`SELECT rowid FROM memories WHERE id IN (`+placeholders(len(chunk))+`)`, arguments...)
+		if err != nil {
+			return nil, err
+		}
+		for rows.Next() {
+			var row int64
+			if scanErr := rows.Scan(&row); scanErr != nil {
+				rows.Close()
+				return nil, scanErr
+			}
+			excluded[row] = true
+		}
+		err = rows.Err()
+		rows.Close()
+		if err != nil {
+			return nil, err
+		}
+	}
+	return excluded, nil
+}
+
+func coveringRows(matched map[int64]int, excluded map[int64]bool, terms int, minCoverage float64) []int64 {
 	required := 1
 	if minCoverage > 0 {
 		required = int(math.Ceil(minCoverage * float64(terms)))
@@ -96,9 +151,10 @@ func coveringRows(matched map[int64]int, terms int, minCoverage float64) []int64
 	}
 	rows := make([]int64, 0, len(matched))
 	for row, count := range matched {
-		if count >= required {
-			rows = append(rows, row)
+		if count < required || excluded[row] {
+			continue
 		}
+		rows = append(rows, row)
 	}
 	sort.Slice(rows, func(first, second int) bool {
 		if matched[rows[first]] != matched[rows[second]] {
@@ -112,26 +168,9 @@ func coveringRows(matched map[int64]int, terms int, minCoverage float64) []int64
 	return rows
 }
 
-func (s *Store) memoriesByRow(ctx context.Context, terms []string, rows []int64, options model.SearchOptions) ([]model.Memory, error) {
-	arguments := []any{ftsMatch(terms)}
-	conditions := []string{"memories_fts MATCH ?", "m.state = 'active'"}
-	if options.ProjectID != "" {
-		conditions = append(conditions, "(m.project_id = ? OR m.project_id = '')")
-		arguments = append(arguments, options.ProjectID)
-	}
-	if len(options.Kinds) > 0 {
-		conditions = append(conditions, "m.kind IN ("+placeholders(len(options.Kinds))+")")
-		for _, kind := range options.Kinds {
-			arguments = append(arguments, kind)
-		}
-	}
-	if len(options.ExcludeIDs) > 0 {
-		conditions = append(conditions, "m.id NOT IN ("+placeholders(len(options.ExcludeIDs))+")")
-		for _, id := range options.ExcludeIDs {
-			arguments = append(arguments, id)
-		}
-	}
-	conditions = append(conditions, "m.rowid IN ("+placeholders(len(rows))+")")
+func (s *Store) memoriesByRow(ctx context.Context, terms []string, rows []int64) ([]model.Memory, error) {
+	arguments := make([]any, 0, len(rows)+1)
+	arguments = append(arguments, ftsMatch(terms))
 	for _, row := range rows {
 		arguments = append(arguments, row)
 	}
@@ -142,7 +181,7 @@ func (s *Store) memoriesByRow(ctx context.Context, terms []string, rows []int64,
                -bm25(memories_fts) AS score, m.rowid
         FROM memories_fts
         JOIN memories m ON m.rowid = memories_fts.rowid
-        WHERE `+strings.Join(conditions, " AND "), arguments...)
+        WHERE memories_fts MATCH ? AND m.rowid IN (`+placeholders(len(rows))+`)`, arguments...)
 	if err != nil {
 		return nil, err
 	}

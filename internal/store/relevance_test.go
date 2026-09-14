@@ -254,3 +254,60 @@ func TestFullMatchSurvivesACrowdOfPartialMatches(t *testing.T) {
 		t.Fatalf("full match lost behind partial matches: %s", contents(results))
 	}
 }
+
+func TestOtherProjectsCannotCrowdOutThisProjectsMatches(t *testing.T) {
+	database := open(t)
+	mine := remember(t, database, model.Memory{
+		ProjectID: project, Kind: "fact",
+		Content: "clickhouse reader grant for the data platform",
+	})
+	for index := 0; index < maxCoveringRows*2; index++ {
+		remember(t, database, model.Memory{
+			ProjectID: "project-b", Kind: "fact",
+			Content: fmt.Sprintf("clickhouse reader grant elsewhere %d", index),
+		})
+	}
+	results := search(t, database, "clickhouse reader grant", 0.5)
+	if len(results) != 1 || results[0].ID != mine.ID {
+		t.Fatalf("another project's matches crowded out mine: %s", contents(results))
+	}
+}
+
+func TestExcludedMatchesCannotCrowdOutTheRest(t *testing.T) {
+	database := open(t)
+	wanted := remember(t, database, model.Memory{
+		ProjectID: project, Kind: "fact",
+		Content: "clickhouse reader grant for the data platform",
+	})
+	excluded := []string{}
+	for index := 0; index < maxCoveringRows*2; index++ {
+		memory := remember(t, database, model.Memory{
+			ProjectID: project, Kind: "fact",
+			Content: fmt.Sprintf("clickhouse reader grant seen %d", index),
+		})
+		excluded = append(excluded, memory.ID)
+	}
+	results, err := database.Search(context.Background(), "clickhouse reader grant",
+		model.SearchOptions{ProjectID: project, Limit: 10, MinCoverage: 0.5, ExcludeIDs: excluded})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != 1 || results[0].ID != wanted.ID {
+		t.Fatalf("already-seen matches crowded out the unseen one: %s", contents(results))
+	}
+}
+
+func TestSupersededMemoriesAreNeverRecalled(t *testing.T) {
+	database := open(t)
+	old := remember(t, database, model.Memory{
+		ProjectID: project, Kind: "decision", Content: "clickhouse reader grant is per environment",
+	})
+	current, err := database.Correct(old.ID, "clickhouse reader grant is per data platform")
+	if err != nil {
+		t.Fatal(err)
+	}
+	results := search(t, database, "clickhouse reader grant", 0.5)
+	if len(results) != 1 || results[0].ID != current.ID {
+		t.Fatalf("superseded memory reached recall: %s", contents(results))
+	}
+}
