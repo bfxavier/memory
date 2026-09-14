@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/bfxavier/memory/internal/model"
 	"github.com/bfxavier/memory/internal/paths"
@@ -392,6 +393,85 @@ func TestMemoriesDroppedByTruncationAreOfferedAgain(t *testing.T) {
 	for _, id := range stored {
 		if !strings.Contains(first.String(), id) && !strings.Contains(second.String(), id) {
 			t.Fatalf("memory %s was recorded as injected but never rendered", id)
+		}
+	}
+}
+
+func TestOversizedMemoryStillRendersAndDoesNotBlockTheRest(t *testing.T) {
+	appPaths := testPaths(t)
+	if err := appPaths.Ensure(); err != nil {
+		t.Fatal(err)
+	}
+	database, err := store.Open(appPaths.Database)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resolved := project.Resolve(t.TempDir())
+	giant, err := database.Remember(model.Memory{
+		ProjectID: resolved.ID, Kind: "fact",
+		Content: "clickhouse reader grant " + strings.Repeat("detail ", maxContextBytes),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	small, err := database.Remember(model.Memory{
+		ProjectID: resolved.ID, Kind: "fact",
+		Content: "clickhouse reader grant for the data platform",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	database.Close()
+
+	prompt := map[string]any{"prompt": "clickhouse reader grant"}
+	var first, second bytes.Buffer
+	Execute("codex", "UserPromptSubmit", bytes.NewReader(hookInput("UserPromptSubmit", resolved.Root, prompt)), &first, appPaths)
+	Execute("codex", "UserPromptSubmit", bytes.NewReader(hookInput("UserPromptSubmit", resolved.Root, prompt)), &second, appPaths)
+
+	if first.Len() == 0 {
+		t.Fatal("an oversized memory silenced recall entirely")
+	}
+	if !strings.Contains(first.String(), giant.ID) {
+		t.Fatalf("oversized memory was never rendered: %s", first.String()[:200])
+	}
+	combined := first.String() + second.String()
+	if !strings.Contains(combined, small.ID) {
+		t.Fatal("the oversized memory blocked the smaller one on every prompt")
+	}
+}
+
+func TestRenderedContextStaysWithinTheByteBudget(t *testing.T) {
+	memories := []model.Memory{}
+	for index := 0; index < promptRecallLimit; index++ {
+		memories = append(memories, model.Memory{
+			ID: fmt.Sprintf("id-%d", index), Kind: "fact",
+			Content: strings.Repeat("wide ", maxContextBytes),
+		})
+	}
+	contextText, rendered := renderContext(memories)
+	if len(contextText) > maxContextBytes {
+		t.Fatalf("context = %d bytes, budget %d", len(contextText), maxContextBytes)
+	}
+	if len(rendered) == 0 {
+		t.Fatal("nothing rendered inside the budget")
+	}
+	if !utf8.ValidString(contextText) {
+		t.Fatal("context is not valid UTF-8")
+	}
+	if !strings.HasSuffix(contextText, "</memory_context>") {
+		t.Fatal("context was not closed")
+	}
+}
+
+func TestClipRunesNeverSplitsACharacter(t *testing.T) {
+	value := strings.Repeat("é", 40)
+	for budget := 0; budget <= len(value); budget++ {
+		clipped := clipRunes(value, budget)
+		if !utf8.ValidString(clipped) {
+			t.Fatalf("budget %d produced invalid UTF-8", budget)
+		}
+		if len(clipped) > budget {
+			t.Fatalf("budget %d produced %d bytes", budget, len(clipped))
 		}
 	}
 }

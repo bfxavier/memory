@@ -8,6 +8,7 @@ import (
 	"os"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/bfxavier/memory/internal/model"
 	"github.com/bfxavier/memory/internal/paths"
@@ -18,12 +19,13 @@ import (
 )
 
 const (
-	maxHookInputBytes = 1024 * 1024
-	maxContextBytes   = 6000
-	recallTimeout     = 90 * time.Millisecond
-	promptRecallLimit = 6
-	startRecallLimit  = 12
-	promptMinCoverage = 0.5
+	maxHookInputBytes       = 1024 * 1024
+	maxContextBytes         = 6000
+	minRenderedContentBytes = 120
+	recallTimeout           = 90 * time.Millisecond
+	promptRecallLimit       = 6
+	startRecallLimit        = 12
+	promptMinCoverage       = 0.5
 )
 
 func Execute(agent, eventName string, input io.Reader, output io.Writer, appPaths paths.Paths) {
@@ -173,19 +175,34 @@ func renderContext(memories []model.Memory) (string, []model.Memory) {
 			if !wroteHeading {
 				heading = strings.ToUpper(kind[:1]) + kind[1:] + "s:\n"
 			}
-			line := fmt.Sprintf("- [%s] %s\n", memory.ID, strings.ReplaceAll(memory.Content, "\n", " "))
-			if builder.Len()+len(heading)+len(line)+len("</memory_context>") > maxContextBytes {
+			prefix := fmt.Sprintf("- [%s] ", memory.ID)
+			budget := maxContextBytes - builder.Len() - len(heading) - len(prefix) -
+				len("\n") - len("</memory_context>")
+			if budget < minRenderedContentBytes {
 				builder.WriteString("</memory_context>")
 				return builder.String(), rendered
 			}
 			builder.WriteString(heading)
-			builder.WriteString(line)
+			builder.WriteString(prefix)
+			builder.WriteString(clipRunes(strings.ReplaceAll(memory.Content, "\n", " "), budget))
+			builder.WriteString("\n")
 			wroteHeading = true
 			rendered = append(rendered, memory)
 		}
 	}
 	builder.WriteString("</memory_context>")
 	return builder.String(), rendered
+}
+
+func clipRunes(value string, budget int) string {
+	if len(value) <= budget {
+		return value
+	}
+	clipped := value[:budget]
+	for len(clipped) > 0 && !utf8.ValidString(clipped) {
+		clipped = clipped[:len(clipped)-1]
+	}
+	return clipped
 }
 
 func requiresJSON(eventName string) bool {
