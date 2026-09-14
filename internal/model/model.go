@@ -40,6 +40,8 @@ type Memory struct {
 	CreatedAt       time.Time  `json:"created_at"`
 	UpdatedAt       time.Time  `json:"updated_at"`
 	Score           float64    `json:"score,omitempty"`
+	Coverage        float64    `json:"-"`
+	Row             int64      `json:"-"`
 }
 
 type SearchOptions struct {

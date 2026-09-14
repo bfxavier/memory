@@ -17,7 +17,7 @@ import (
 const memorySelect = `
 SELECT id, project_id, kind, state, content, confidence,
        source_agent, source_session_id, source_event_id, tags,
-       supersedes_id, valid_until, created_at, updated_at, 0 AS score
+       supersedes_id, valid_until, created_at, updated_at, 0 AS score, rowid
 FROM memories`
 
 const (
@@ -28,6 +28,7 @@ const (
 	weightProject    = 0.1
 	recencyHalfLife  = 30 * 24 * time.Hour
 	maxQueryTerms    = 16
+	maxCoveringRows  = 200
 )
 
 type scanner interface {
@@ -39,7 +40,79 @@ func (s *Store) Search(ctx context.Context, query string, options model.SearchOp
 	if len(terms) == 0 {
 		return []model.Memory{}, nil
 	}
-	limit := clampLimit(options.Limit)
+	matched, err := s.matchedTermCounts(ctx, terms)
+	if err != nil {
+		return nil, err
+	}
+	rows := coveringRows(matched, len(terms), options.MinCoverage)
+	if len(rows) == 0 {
+		return []model.Memory{}, nil
+	}
+	candidates, err := s.memoriesByRow(ctx, terms, rows, options)
+	if err != nil {
+		return nil, err
+	}
+	for index := range candidates {
+		candidates[index].Coverage = float64(matched[candidates[index].Row]) / float64(len(terms))
+	}
+	return rank(candidates, options, clampLimit(options.Limit)), nil
+}
+
+// Coverage decides which memories are eligible, so it is computed over every
+// row each term reaches before any window is applied. Ranking by lexical score
+// first and cutting to a window would let low-coverage rows bury a full match.
+func (s *Store) matchedTermCounts(ctx context.Context, terms []string) (map[int64]int, error) {
+	matched := map[int64]int{}
+	for _, term := range terms {
+		rows, err := s.db.QueryContext(ctx,
+			`SELECT rowid FROM memories_fts WHERE memories_fts MATCH ?`, `"`+term+`"`)
+		if err != nil {
+			return nil, err
+		}
+		for rows.Next() {
+			var row int64
+			if scanErr := rows.Scan(&row); scanErr != nil {
+				rows.Close()
+				return nil, scanErr
+			}
+			matched[row]++
+		}
+		if err := rows.Err(); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		rows.Close()
+	}
+	return matched, nil
+}
+
+func coveringRows(matched map[int64]int, terms int, minCoverage float64) []int64 {
+	required := 1
+	if minCoverage > 0 {
+		required = int(math.Ceil(minCoverage * float64(terms)))
+		if required < 1 {
+			required = 1
+		}
+	}
+	rows := make([]int64, 0, len(matched))
+	for row, count := range matched {
+		if count >= required {
+			rows = append(rows, row)
+		}
+	}
+	sort.Slice(rows, func(first, second int) bool {
+		if matched[rows[first]] != matched[rows[second]] {
+			return matched[rows[first]] > matched[rows[second]]
+		}
+		return rows[first] > rows[second]
+	})
+	if len(rows) > maxCoveringRows {
+		rows = rows[:maxCoveringRows]
+	}
+	return rows
+}
+
+func (s *Store) memoriesByRow(ctx context.Context, terms []string, rows []int64, options model.SearchOptions) ([]model.Memory, error) {
 	arguments := []any{ftsMatch(terms)}
 	conditions := []string{"memories_fts MATCH ?", "m.state = 'active'"}
 	if options.ProjectID != "" {
@@ -47,33 +120,38 @@ func (s *Store) Search(ctx context.Context, query string, options model.SearchOp
 		arguments = append(arguments, options.ProjectID)
 	}
 	if len(options.Kinds) > 0 {
-		placeholders := make([]string, len(options.Kinds))
-		for index, kind := range options.Kinds {
-			placeholders[index] = "?"
+		conditions = append(conditions, "m.kind IN ("+placeholders(len(options.Kinds))+")")
+		for _, kind := range options.Kinds {
 			arguments = append(arguments, kind)
 		}
-		conditions = append(conditions, "m.kind IN ("+strings.Join(placeholders, ",")+")")
 	}
-	arguments = append(arguments, candidateLimit(limit))
-	rows, err := s.db.QueryContext(ctx, `
+	if len(options.ExcludeIDs) > 0 {
+		conditions = append(conditions, "m.id NOT IN ("+placeholders(len(options.ExcludeIDs))+")")
+		for _, id := range options.ExcludeIDs {
+			arguments = append(arguments, id)
+		}
+	}
+	conditions = append(conditions, "m.rowid IN ("+placeholders(len(rows))+")")
+	for _, row := range rows {
+		arguments = append(arguments, row)
+	}
+	result, err := s.db.QueryContext(ctx, `
         SELECT m.id, m.project_id, m.kind, m.state, m.content, m.confidence,
                m.source_agent, m.source_session_id, m.source_event_id, m.tags,
                m.supersedes_id, m.valid_until, m.created_at, m.updated_at,
-               -bm25(memories_fts) AS score
+               -bm25(memories_fts) AS score, m.rowid
         FROM memories_fts
         JOIN memories m ON m.rowid = memories_fts.rowid
-        WHERE `+strings.Join(conditions, " AND ")+`
-        ORDER BY bm25(memories_fts), m.updated_at DESC
-        LIMIT ?`, arguments...)
+        WHERE `+strings.Join(conditions, " AND "), arguments...)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	candidates, err := scanMemories(rows)
-	if err != nil {
-		return nil, err
-	}
-	return rank(candidates, terms, options, limit), nil
+	defer result.Close()
+	return scanMemories(result)
+}
+
+func placeholders(count int) string {
+	return strings.TrimSuffix(strings.Repeat("?,", count), ",")
 }
 
 func (s *Store) Recent(ctx context.Context, options model.SearchOptions) ([]model.Memory, error) {
@@ -132,11 +210,7 @@ func (s *Store) All(ctx context.Context) ([]model.Memory, error) {
 	return scanMemories(rows)
 }
 
-func rank(candidates []model.Memory, terms []string, options model.SearchOptions, limit int) []model.Memory {
-	excluded := make(map[string]bool, len(options.ExcludeIDs))
-	for _, id := range options.ExcludeIDs {
-		excluded[id] = true
-	}
+func rank(candidates []model.Memory, options model.SearchOptions, limit int) []model.Memory {
 	maxLexical := 0.0
 	for _, candidate := range candidates {
 		if candidate.Score > maxLexical {
@@ -146,14 +220,10 @@ func rank(candidates []model.Memory, terms []string, options model.SearchOptions
 	now := time.Now()
 	ranked := make([]model.Memory, 0, len(candidates))
 	for _, candidate := range candidates {
-		if excluded[candidate.ID] {
+		if candidate.Coverage < options.MinCoverage {
 			continue
 		}
-		matched := coverage(candidate, terms)
-		if matched < options.MinCoverage {
-			continue
-		}
-		candidate.Score = relevance(candidate, matched, maxLexical, now)
+		candidate.Score = relevance(candidate, candidate.Coverage, maxLexical, now)
 		ranked = append(ranked, candidate)
 	}
 	sort.SliceStable(ranked, func(first, second int) bool {
@@ -176,20 +246,6 @@ func relevance(memory model.Memory, matched, maxLexical float64, now time.Time) 
 		score += weightProject
 	}
 	return score
-}
-
-func coverage(memory model.Memory, terms []string) float64 {
-	if len(terms) == 0 {
-		return 0
-	}
-	haystack := tokenSet(memory.Content + " " + strings.Join(memory.Tags, " "))
-	matched := 0
-	for _, term := range terms {
-		if haystack[term] {
-			matched++
-		}
-	}
-	return float64(matched) / float64(len(terms))
 }
 
 func decay(age time.Duration) float64 {
@@ -218,7 +274,7 @@ func scanMemory(row scanner) (model.Memory, error) {
 		&memory.ID, &memory.ProjectID, &memory.Kind, &memory.State, &memory.Content,
 		&memory.Confidence, &memory.SourceAgent, &memory.SourceSessionID,
 		&memory.SourceEventID, &tags, &memory.SupersedesID, &validUntil,
-		&createdAt, &updatedAt, &memory.Score,
+		&createdAt, &updatedAt, &memory.Score, &memory.Row,
 	)
 	if err != nil {
 		return model.Memory{}, err
@@ -302,17 +358,6 @@ func tokenSet(value string) map[string]bool {
 		set[word] = true
 	}
 	return set
-}
-
-func candidateLimit(limit int) int {
-	candidates := limit * 6
-	if candidates < 60 {
-		candidates = 60
-	}
-	if candidates > 300 {
-		candidates = 300
-	}
-	return candidates
 }
 
 func clampLimit(limit int) int {

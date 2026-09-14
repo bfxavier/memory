@@ -2,6 +2,8 @@ package store
 
 import (
 	"context"
+	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -203,5 +205,52 @@ func TestConversationalFillerStillRecallsNothing(t *testing.T) {
 	})
 	if results := search(t, database, "what should we do about this", 0.5); len(results) != 0 {
 		t.Fatalf("filler prompt recalled %s", contents(results))
+	}
+}
+
+func TestMatchesBelowTheCandidateWindowStayReachable(t *testing.T) {
+	database := open(t)
+	ids := []string{}
+	for index := 0; index < 100; index++ {
+		memory := remember(t, database, model.Memory{
+			ProjectID: project, Kind: "fact",
+			Content: fmt.Sprintf("clickhouse reader grant number %d", index),
+		})
+		ids = append(ids, memory.ID)
+	}
+	results, err := database.Search(context.Background(), "clickhouse reader grant",
+		model.SearchOptions{ProjectID: project, Limit: 10, MinCoverage: 0.5, ExcludeIDs: ids[30:]})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != 10 {
+		t.Fatalf("excluding 70 of 100 matches left %d results, want 10", len(results))
+	}
+	excluded := map[string]bool{}
+	for _, id := range ids[30:] {
+		excluded[id] = true
+	}
+	for _, result := range results {
+		if excluded[result.ID] {
+			t.Fatalf("returned an excluded memory: %s", result.ID)
+		}
+	}
+}
+
+func TestFullMatchSurvivesACrowdOfPartialMatches(t *testing.T) {
+	database := open(t)
+	for index := 0; index < 300; index++ {
+		remember(t, database, model.Memory{
+			ProjectID: project, Kind: "fact",
+			Content: fmt.Sprintf("clickhouse %s %d", strings.Repeat("clickhouse ", 20), index),
+		})
+	}
+	target := remember(t, database, model.Memory{
+		ProjectID: project, Kind: "fact",
+		Content: "clickhouse reader grant for the data platform",
+	})
+	results := search(t, database, "clickhouse reader grant", 0.5)
+	if len(results) != 1 || results[0].ID != target.ID {
+		t.Fatalf("full match lost behind partial matches: %s", contents(results))
 	}
 }
