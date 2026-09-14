@@ -4,6 +4,8 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"math"
+	"sort"
 	"strings"
 	"time"
 	"unicode"
@@ -17,16 +19,27 @@ SELECT id, project_id, kind, state, content, confidence,
        supersedes_id, valid_until, created_at, updated_at, 0 AS score
 FROM memories`
 
+const (
+	weightCoverage   = 1.0
+	weightLexical    = 0.3
+	weightConfidence = 0.2
+	weightRecency    = 0.2
+	weightProject    = 0.1
+	recencyHalfLife  = 30 * 24 * time.Hour
+	maxQueryTerms    = 16
+)
+
 type scanner interface {
 	Scan(...any) error
 }
 
 func (s *Store) Search(ctx context.Context, query string, options model.SearchOptions) ([]model.Memory, error) {
-	match := ftsQuery(query)
-	if match == "" {
+	terms := QueryTerms(query)
+	if len(terms) == 0 {
 		return s.Recent(ctx, options)
 	}
-	arguments := []any{match}
+	limit := clampLimit(options.Limit)
+	arguments := []any{ftsMatch(terms)}
 	conditions := []string{"memories_fts MATCH ?", "m.state = 'active'"}
 	if options.ProjectID != "" {
 		conditions = append(conditions, "(m.project_id = ? OR m.project_id = '')")
@@ -40,7 +53,7 @@ func (s *Store) Search(ctx context.Context, query string, options model.SearchOp
 		}
 		conditions = append(conditions, "m.kind IN ("+strings.Join(placeholders, ",")+")")
 	}
-	arguments = append(arguments, clampLimit(options.Limit))
+	arguments = append(arguments, candidateLimit(limit))
 	rows, err := s.db.QueryContext(ctx, `
         SELECT m.id, m.project_id, m.kind, m.state, m.content, m.confidence,
                m.source_agent, m.source_session_id, m.source_event_id, m.tags,
@@ -55,7 +68,11 @@ func (s *Store) Search(ctx context.Context, query string, options model.SearchOp
 		return nil, err
 	}
 	defer rows.Close()
-	return scanMemories(rows)
+	candidates, err := scanMemories(rows)
+	if err != nil {
+		return nil, err
+	}
+	return rank(candidates, terms, options.MinCoverage, limit), nil
 }
 
 func (s *Store) Recent(ctx context.Context, options model.SearchOptions) ([]model.Memory, error) {
@@ -77,6 +94,22 @@ func (s *Store) Recent(ctx context.Context, options model.SearchOptions) ([]mode
 	return scanMemories(rows)
 }
 
+func (s *Store) CountActive(ctx context.Context, projectID string) (int, error) {
+	arguments := []any{}
+	conditions := []string{"state = 'active'"}
+	if projectID != "" {
+		conditions = append(conditions, "(project_id = ? OR project_id = '')")
+		arguments = append(arguments, projectID)
+	}
+	row := s.db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM memories WHERE `+strings.Join(conditions, " AND "), arguments...)
+	var count int
+	if err := row.Scan(&count); err != nil {
+		return 0, err
+	}
+	return count, nil
+}
+
 func (s *Store) ActiveProject(ctx context.Context, projectID string, limit int) ([]model.Memory, error) {
 	rows, err := s.db.QueryContext(ctx, memorySelect+`
         WHERE state = 'active' AND project_id = ?
@@ -96,6 +129,76 @@ func (s *Store) All(ctx context.Context) ([]model.Memory, error) {
 	}
 	defer rows.Close()
 	return scanMemories(rows)
+}
+
+func rank(candidates []model.Memory, terms []string, minCoverage float64, limit int) []model.Memory {
+	maxLexical := 0.0
+	for _, candidate := range candidates {
+		if candidate.Score > maxLexical {
+			maxLexical = candidate.Score
+		}
+	}
+	now := time.Now()
+	ranked := make([]model.Memory, 0, len(candidates))
+	for _, candidate := range candidates {
+		matched := coverage(candidate, terms)
+		if matched < minCoverage {
+			continue
+		}
+		candidate.Score = relevance(candidate, matched, maxLexical, now)
+		ranked = append(ranked, candidate)
+	}
+	sort.SliceStable(ranked, func(first, second int) bool {
+		return ranked[first].Score > ranked[second].Score
+	})
+	if len(ranked) > limit {
+		ranked = ranked[:limit]
+	}
+	return ranked
+}
+
+func relevance(memory model.Memory, matched, maxLexical float64, now time.Time) float64 {
+	score := weightCoverage * matched
+	if maxLexical > 0 {
+		score += weightLexical * clampUnit(memory.Score/maxLexical)
+	}
+	score += weightConfidence * clampUnit(memory.Confidence)
+	score += weightRecency * decay(now.Sub(memory.UpdatedAt))
+	if memory.ProjectID != "" {
+		score += weightProject
+	}
+	return score
+}
+
+func coverage(memory model.Memory, terms []string) float64 {
+	if len(terms) == 0 {
+		return 0
+	}
+	haystack := tokenSet(memory.Content + " " + strings.Join(memory.Tags, " "))
+	matched := 0
+	for _, term := range terms {
+		if haystack[term] {
+			matched++
+		}
+	}
+	return float64(matched) / float64(len(terms))
+}
+
+func decay(age time.Duration) float64 {
+	if age <= 0 {
+		return 1
+	}
+	return math.Exp(-math.Ln2 * float64(age) / float64(recencyHalfLife))
+}
+
+func clampUnit(value float64) float64 {
+	if value < 0 {
+		return 0
+	}
+	if value > 1 {
+		return 1
+	}
+	return value
 }
 
 func scanMemory(row scanner) (model.Memory, error) {
@@ -136,20 +239,60 @@ func scanMemories(rows *sql.Rows) ([]model.Memory, error) {
 	return memories, rows.Err()
 }
 
-func ftsQuery(value string) string {
-	words := strings.FieldsFunc(value, func(character rune) bool {
-		return !(unicode.IsLetter(character) || unicode.IsDigit(character) || character == '_')
-	})
-	if len(words) > 16 {
-		words = words[:16]
-	}
-	quoted := make([]string, 0, len(words))
-	for _, word := range words {
-		if word != "" {
-			quoted = append(quoted, `"`+word+`"`)
+func QueryTerms(value string) []string {
+	seen := map[string]bool{}
+	terms := []string{}
+	for _, word := range tokenize(value) {
+		if stopWords[word] || seen[word] {
+			continue
+		}
+		seen[word] = true
+		terms = append(terms, word)
+		if len(terms) == maxQueryTerms {
+			break
 		}
 	}
+	return terms
+}
+
+func ftsMatch(terms []string) string {
+	quoted := make([]string, 0, len(terms))
+	for _, term := range terms {
+		quoted = append(quoted, `"`+term+`"`)
+	}
 	return strings.Join(quoted, " OR ")
+}
+
+func tokenize(value string) []string {
+	words := strings.FieldsFunc(strings.ToLower(value), func(character rune) bool {
+		return !(unicode.IsLetter(character) || unicode.IsDigit(character))
+	})
+	filtered := make([]string, 0, len(words))
+	for _, word := range words {
+		if word != "" {
+			filtered = append(filtered, word)
+		}
+	}
+	return filtered
+}
+
+func tokenSet(value string) map[string]bool {
+	set := map[string]bool{}
+	for _, word := range tokenize(value) {
+		set[word] = true
+	}
+	return set
+}
+
+func candidateLimit(limit int) int {
+	candidates := limit * 6
+	if candidates < 60 {
+		candidates = 60
+	}
+	if candidates > 300 {
+		candidates = 300
+	}
+	return candidates
 }
 
 func clampLimit(limit int) int {

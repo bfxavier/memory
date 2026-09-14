@@ -1,0 +1,27 @@
+package store
+
+var stopWords = map[string]bool{
+	"a": true, "about": true, "after": true, "again": true, "all": true, "also": true,
+	"am": true, "an": true, "and": true, "any": true, "are": true, "as": true, "at": true,
+	"back": true, "be": true, "because": true, "been": true, "before": true, "being": true,
+	"both": true, "but": true, "by": true, "can": true, "could": true, "did": true,
+	"do": true, "does": true, "doing": true, "done": true, "down": true, "each": true,
+	"even": true, "every": true, "far": true, "few": true, "for": true, "from": true,
+	"get": true, "go": true, "had": true, "has": true, "have": true, "having": true,
+	"he": true, "her": true, "here": true, "hers": true, "him": true, "his": true,
+	"how": true, "i": true, "if": true, "in": true, "into": true, "is": true, "it": true,
+	"its": true, "just": true, "let": true, "like": true, "make": true, "many": true,
+	"may": true, "me": true, "might": true, "more": true, "most": true, "much": true,
+	"must": true, "my": true, "need": true, "no": true, "not": true, "now": true,
+	"of": true, "off": true, "on": true, "once": true, "one": true, "only": true,
+	"or": true, "other": true, "our": true, "out": true, "over": true, "own": true,
+	"please": true, "put": true, "same": true, "see": true, "she": true, "should": true,
+	"so": true, "some": true, "still": true, "such": true, "sure": true, "take": true,
+	"than": true, "that": true, "the": true, "their": true, "them": true, "then": true,
+	"there": true, "these": true, "they": true, "thing": true, "things": true,
+	"this": true, "those": true, "through": true, "to": true, "too": true, "try": true,
+	"under": true, "until": true, "up": true, "us": true, "use": true, "very": true,
+	"want": true, "was": true, "we": true, "well": true, "were": true, "what": true,
+	"when": true, "where": true, "which": true, "while": true, "who": true, "why": true,
+	"will": true, "with": true, "would": true, "yet": true, "you": true, "your": true,
+}

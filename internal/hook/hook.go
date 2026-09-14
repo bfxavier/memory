@@ -23,6 +23,7 @@ const (
 	recallTimeout     = 90 * time.Millisecond
 	promptRecallLimit = 6
 	startRecallLimit  = 12
+	promptMinCoverage = 0.5
 )
 
 func Execute(agent, eventName string, input io.Reader, output io.Writer, appPaths paths.Paths) {
@@ -75,20 +76,25 @@ func Execute(agent, eventName string, input io.Reader, output io.Writer, appPath
 		_ = spool.Append(appPaths.Spool, event)
 	}
 
-	if eventName == "SessionStart" || eventName == "SubagentStart" || eventName == "UserPromptSubmit" {
+	if injectsContext(eventName) {
 		memories, recalled := recall(raw, eventName, resolvedProject.ID, appPaths.Database)
-		if len(memories) > 0 || eventName == "SessionStart" && recalled {
-			contextText := renderContext(memories)
-			response := map[string]any{
-				"hookSpecificOutput": map[string]any{
-					"hookEventName":     eventName,
-					"additionalContext": contextText,
-				},
-			}
-			if data, marshalErr := json.Marshal(response); marshalErr == nil {
-				_, _ = output.Write(data)
-				wroteOutput = true
-				return
+		if recalled {
+			fresh := suppressRepeats(appPaths, sessionID, memories)
+			emptyProject := eventName == "SessionStart" && len(memories) == 0
+			if len(fresh) > 0 || emptyProject {
+				contextText := renderContext(fresh)
+				response := map[string]any{
+					"hookSpecificOutput": map[string]any{
+						"hookEventName":     eventName,
+						"additionalContext": contextText,
+					},
+				}
+				if data, marshalErr := json.Marshal(response); marshalErr == nil {
+					_, _ = output.Write(data)
+					wroteOutput = true
+					recordInjections(appPaths, sessionID, fresh)
+					return
+				}
 			}
 		}
 	}
@@ -110,6 +116,10 @@ func readInput(input io.Reader) (map[string]any, error) {
 	return raw, nil
 }
 
+func injectsContext(eventName string) bool {
+	return eventName == "SessionStart" || eventName == "SubagentStart" || eventName == "UserPromptSubmit"
+}
+
 func recall(raw map[string]any, eventName, projectID, databasePath string) ([]model.Memory, bool) {
 	ctx, cancel := context.WithTimeout(context.Background(), recallTimeout)
 	defer cancel()
@@ -118,17 +128,26 @@ func recall(raw map[string]any, eventName, projectID, databasePath string) ([]mo
 		return nil, false
 	}
 	defer database.Close()
-	options := model.SearchOptions{ProjectID: projectID, Limit: startRecallLimit}
 	if eventName == "UserPromptSubmit" {
-		options.Limit = promptRecallLimit
 		prompt, _ := raw["prompt"].(string)
-		memories, searchErr := database.Search(ctx, prompt, options)
+		memories, searchErr := database.Search(ctx, prompt, model.SearchOptions{
+			ProjectID:   projectID,
+			Limit:       promptRecallLimit,
+			MinCoverage: promptMinCoverage,
+		})
 		if searchErr != nil {
 			return nil, false
 		}
 		return memories, true
 	}
-	memories, recentErr := database.Recent(ctx, options)
+	active, countErr := database.CountActive(ctx, projectID)
+	if countErr != nil {
+		return nil, false
+	}
+	if active > startRecallLimit {
+		return nil, false
+	}
+	memories, recentErr := database.Recent(ctx, model.SearchOptions{ProjectID: projectID, Limit: startRecallLimit})
 	if recentErr != nil {
 		return nil, false
 	}

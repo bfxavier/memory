@@ -3,6 +3,7 @@ package hook
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -240,4 +241,88 @@ func hookInput(eventName, cwd string, extra map[string]any) []byte {
 	}
 	data, _ := json.Marshal(value)
 	return data
+}
+
+func TestSessionStartStaysSilentOncePastTheDigestLimit(t *testing.T) {
+	appPaths := testPaths(t)
+	if err := appPaths.Ensure(); err != nil {
+		t.Fatal(err)
+	}
+	database, err := store.Open(appPaths.Database)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resolved := project.Resolve(t.TempDir())
+	for index := 0; index <= startRecallLimit; index++ {
+		if _, err := database.Remember(model.Memory{
+			ProjectID: resolved.ID, Kind: "fact",
+			Content: fmt.Sprintf("unrelated project fact number %d", index),
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	database.Close()
+
+	var output bytes.Buffer
+	Execute("codex", "SessionStart", bytes.NewReader(hookInput("SessionStart", resolved.Root, nil)), &output, appPaths)
+	if output.Len() != 0 {
+		t.Fatalf("SessionStart injected a recency digest: %s", output.String())
+	}
+}
+
+func TestRecalledMemoryIsNotInjectedTwiceInOneSession(t *testing.T) {
+	appPaths := testPaths(t)
+	if err := appPaths.Ensure(); err != nil {
+		t.Fatal(err)
+	}
+	database, err := store.Open(appPaths.Database)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resolved := project.Resolve(t.TempDir())
+	memory, err := database.Remember(model.Memory{
+		ProjectID: resolved.ID, Kind: "decision", Content: "Use SQLite FTS5 for recall",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	database.Close()
+
+	prompt := map[string]any{"prompt": "Which SQLite recall should we use?"}
+	var first, second bytes.Buffer
+	Execute("codex", "UserPromptSubmit", bytes.NewReader(hookInput("UserPromptSubmit", resolved.Root, prompt)), &first, appPaths)
+	Execute("codex", "UserPromptSubmit", bytes.NewReader(hookInput("UserPromptSubmit", resolved.Root, prompt)), &second, appPaths)
+
+	if !strings.Contains(first.String(), memory.ID) {
+		t.Fatalf("first prompt did not recall the memory: %s", first.String())
+	}
+	if strings.Contains(second.String(), memory.ID) {
+		t.Fatalf("second prompt repeated the memory: %s", second.String())
+	}
+}
+
+func TestWeakPromptMatchIsNotInjected(t *testing.T) {
+	appPaths := testPaths(t)
+	if err := appPaths.Ensure(); err != nil {
+		t.Fatal(err)
+	}
+	database, err := store.Open(appPaths.Database)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resolved := project.Resolve(t.TempDir())
+	if _, err := database.Remember(model.Memory{
+		ProjectID: resolved.ID, Kind: "note",
+		Content: "A password generated via az vm run-command invoke is written to Azure activity logs",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	database.Close()
+
+	var output bytes.Buffer
+	input := hookInput("UserPromptSubmit", resolved.Root, map[string]any{"prompt": "az rest JSON body escaping"})
+	Execute("codex", "UserPromptSubmit", bytes.NewReader(input), &output, appPaths)
+	if output.Len() != 0 {
+		t.Fatalf("weak match was injected: %s", output.String())
+	}
 }

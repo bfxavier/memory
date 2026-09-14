@@ -43,9 +43,10 @@ type Memory struct {
 }
 
 type SearchOptions struct {
-	ProjectID string
-	Kinds     []string
-	Limit     int
+	ProjectID   string
+	Kinds       []string
+	Limit       int
+	MinCoverage float64
 }
 
 type Stats struct {
