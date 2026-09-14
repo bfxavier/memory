@@ -78,6 +78,10 @@ func Execute(agent, eventName string, input io.Reader, output io.Writer, appPath
 		_ = spool.Append(appPaths.Spool, event)
 	}
 
+	if eventName == "SessionEnd" {
+		forgetInjections(appPaths, sessionID)
+	}
+
 	if injectsContext(eventName) {
 		memories, recalled := recall(raw, eventName, sessionID, resolvedProject.ID, appPaths)
 		if recalled {
@@ -93,7 +97,7 @@ func Execute(agent, eventName string, input io.Reader, output io.Writer, appPath
 				if data, marshalErr := json.Marshal(response); marshalErr == nil {
 					_, _ = output.Write(data)
 					wroteOutput = true
-					if eventName == "UserPromptSubmit" {
+					if eventName != "SubagentStart" {
 						recordInjections(appPaths, sessionID, rendered)
 					}
 					return

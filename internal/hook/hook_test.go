@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 	"unicode/utf8"
 
 	"github.com/bfxavier/memory/internal/model"
@@ -503,8 +504,8 @@ func TestSubagentStartStillReceivesMemoryTheParentSessionSaw(t *testing.T) {
 	if !strings.Contains(start.String(), memory.ID) {
 		t.Fatalf("session start digest missing the memory: %s", start.String())
 	}
-	if !strings.Contains(prompt.String(), memory.ID) {
-		t.Fatalf("prompt recall missing the memory: %s", prompt.String())
+	if strings.Contains(prompt.String(), memory.ID) {
+		t.Fatalf("prompt repeated what session start already showed: %s", prompt.String())
 	}
 	if !strings.Contains(subagent.String(), memory.ID) {
 		t.Fatalf("subagent start was starved by the parent session: %s", subagent.String())
@@ -563,5 +564,68 @@ func TestInjectionHistoryOutlastsAnyRealSession(t *testing.T) {
 	if maxTrackedInjections < promptRecallLimit*promptsInALongSession {
 		t.Fatalf("history holds %d ids, a %d-prompt session can inject %d",
 			maxTrackedInjections, promptsInALongSession, promptRecallLimit*promptsInALongSession)
+	}
+}
+
+func TestSessionEndForgetsThatSessionsInjections(t *testing.T) {
+	appPaths := testPaths(t)
+	if err := appPaths.Ensure(); err != nil {
+		t.Fatal(err)
+	}
+	database, err := store.Open(appPaths.Database)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resolved := project.Resolve(t.TempDir())
+	memory, err := database.Remember(model.Memory{
+		ProjectID: resolved.ID, Kind: "decision", Content: "Use SQLite FTS5 for recall",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	database.Close()
+
+	prompt := map[string]any{"prompt": "Which SQLite recall should we use?"}
+	var first, afterEnd bytes.Buffer
+	Execute("codex", "UserPromptSubmit", bytes.NewReader(hookInput("UserPromptSubmit", resolved.Root, prompt)), &first, appPaths)
+	if !strings.Contains(first.String(), memory.ID) {
+		t.Fatalf("first prompt did not recall the memory: %s", first.String())
+	}
+	if entries, readErr := os.ReadDir(filepath.Join(appPaths.Home, "recall")); readErr != nil || len(entries) != 1 {
+		t.Fatalf("expected one recall file, got %v (%v)", entries, readErr)
+	}
+
+	Execute("codex", "SessionEnd", bytes.NewReader(hookInput("SessionEnd", resolved.Root, nil)), io.Discard, appPaths)
+	if entries, _ := os.ReadDir(filepath.Join(appPaths.Home, "recall")); len(entries) != 0 {
+		t.Fatalf("session end left %d recall files behind", len(entries))
+	}
+
+	Execute("codex", "UserPromptSubmit", bytes.NewReader(hookInput("UserPromptSubmit", resolved.Root, prompt)), &afterEnd, appPaths)
+	if !strings.Contains(afterEnd.String(), memory.ID) {
+		t.Fatalf("a new session inherited the ended session's suppression: %s", afterEnd.String())
+	}
+}
+
+func TestAbandonedSessionStateIsSweptByAge(t *testing.T) {
+	appPaths := testPaths(t)
+	if err := appPaths.Ensure(); err != nil {
+		t.Fatal(err)
+	}
+	directory := filepath.Join(appPaths.Home, "recall")
+	if err := os.MkdirAll(directory, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	abandoned := filepath.Join(directory, "abandoned.json")
+	if err := os.WriteFile(abandoned, []byte(`["id"]`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	stale := time.Now().Add(-staleInjectionAge - time.Hour)
+	if err := os.Chtimes(abandoned, stale, stale); err != nil {
+		t.Fatal(err)
+	}
+
+	Execute("codex", "SessionEnd", bytes.NewReader(hookInput("SessionEnd", t.TempDir(), nil)), io.Discard, appPaths)
+	if _, err := os.Stat(abandoned); !os.IsNotExist(err) {
+		t.Fatalf("stale session state survived the sweep: %v", err)
 	}
 }

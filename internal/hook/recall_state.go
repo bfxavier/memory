@@ -5,12 +5,16 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/bfxavier/memory/internal/model"
 	"github.com/bfxavier/memory/internal/paths"
 )
 
-const maxTrackedInjections = 10000
+const (
+	maxTrackedInjections = 10000
+	staleInjectionAge    = 7 * 24 * time.Hour
+)
 
 func alreadyInjected(appPaths paths.Paths, sessionID string) []string {
 	path := injectionLogPath(appPaths, sessionID)
@@ -55,6 +59,32 @@ func loadInjections(path string) []string {
 		return nil
 	}
 	return injected
+}
+
+func forgetInjections(appPaths paths.Paths, sessionID string) {
+	if path := injectionLogPath(appPaths, sessionID); path != "" {
+		_ = os.Remove(path)
+	}
+	sweepStaleInjections(appPaths)
+}
+
+func sweepStaleInjections(appPaths paths.Paths) {
+	if appPaths.Home == "" {
+		return
+	}
+	directory := filepath.Join(appPaths.Home, "recall")
+	entries, err := os.ReadDir(directory)
+	if err != nil {
+		return
+	}
+	cutoff := time.Now().Add(-staleInjectionAge)
+	for _, entry := range entries {
+		info, statErr := entry.Info()
+		if statErr != nil || info.ModTime().After(cutoff) {
+			continue
+		}
+		_ = os.Remove(filepath.Join(directory, entry.Name()))
+	}
 }
 
 func injectionLogPath(appPaths paths.Paths, sessionID string) string {

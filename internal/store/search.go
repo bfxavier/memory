@@ -28,7 +28,7 @@ const (
 	weightProject    = 0.1
 	recencyHalfLife  = 30 * 24 * time.Hour
 	maxQueryTerms    = 16
-	maxCoveringRows  = 200
+	maxCoveringRows  = 5000
 	idLookupChunk    = 400
 )
 
@@ -166,24 +166,37 @@ func coveringRows(matched map[int64]int, excluded map[int64]bool, terms int, min
 }
 
 func (s *Store) memoriesByRow(ctx context.Context, terms []string, rows []int64) ([]model.Memory, error) {
-	arguments := make([]any, 0, len(rows)+1)
-	arguments = append(arguments, ftsMatch(terms))
-	for _, row := range rows {
-		arguments = append(arguments, row)
-	}
-	result, err := s.db.QueryContext(ctx, `
+	memories := []model.Memory{}
+	for start := 0; start < len(rows); start += idLookupChunk {
+		end := start + idLookupChunk
+		if end > len(rows) {
+			end = len(rows)
+		}
+		chunk := rows[start:end]
+		arguments := make([]any, 0, len(chunk)+1)
+		arguments = append(arguments, ftsMatch(terms))
+		for _, row := range chunk {
+			arguments = append(arguments, row)
+		}
+		result, err := s.db.QueryContext(ctx, `
         SELECT m.id, m.project_id, m.kind, m.state, m.content, m.confidence,
                m.source_agent, m.source_session_id, m.source_event_id, m.tags,
                m.supersedes_id, m.valid_until, m.created_at, m.updated_at,
                -bm25(memories_fts) AS score, m.rowid
         FROM memories_fts
         JOIN memories m ON m.rowid = memories_fts.rowid
-        WHERE memories_fts MATCH ? AND m.rowid IN (`+placeholders(len(rows))+`)`, arguments...)
-	if err != nil {
-		return nil, err
+        WHERE memories_fts MATCH ? AND m.rowid IN (`+placeholders(len(chunk))+`)`, arguments...)
+		if err != nil {
+			return nil, err
+		}
+		batch, err := scanMemories(result)
+		result.Close()
+		if err != nil {
+			return nil, err
+		}
+		memories = append(memories, batch...)
 	}
-	defer result.Close()
-	return scanMemories(result)
+	return memories, nil
 }
 
 func placeholders(count int) string {

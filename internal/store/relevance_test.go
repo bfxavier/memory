@@ -311,3 +311,21 @@ func TestSupersededMemoriesAreNeverRecalled(t *testing.T) {
 		t.Fatalf("superseded memory reached recall: %s", contents(results))
 	}
 }
+
+func TestConfidenceOutranksRecencyAcrossALargeTiedSet(t *testing.T) {
+	database := open(t)
+	best := remember(t, database, model.Memory{
+		ProjectID: project, Kind: "fact", Confidence: 1,
+		Content: "clickhouse reader grant for the data platform",
+	})
+	for index := 0; index < 500; index++ {
+		remember(t, database, model.Memory{
+			ProjectID: project, Kind: "fact", Confidence: 0.1,
+			Content: fmt.Sprintf("clickhouse reader grant newer tie %d", index),
+		})
+	}
+	results := search(t, database, "clickhouse reader grant", 0.5)
+	if len(results) == 0 || results[0].ID != best.ID {
+		t.Fatalf("the highest-confidence match lost to newer ties: %s", contents(results))
+	}
+}
