@@ -11,6 +11,7 @@ import (
 	"unicode"
 
 	"github.com/bfxavier/memory/internal/model"
+	"golang.org/x/text/unicode/norm"
 )
 
 const memorySelect = `
@@ -36,7 +37,7 @@ type scanner interface {
 func (s *Store) Search(ctx context.Context, query string, options model.SearchOptions) ([]model.Memory, error) {
 	terms := QueryTerms(query)
 	if len(terms) == 0 {
-		return s.Recent(ctx, options)
+		return []model.Memory{}, nil
 	}
 	limit := clampLimit(options.Limit)
 	arguments := []any{ftsMatch(terms)}
@@ -264,7 +265,7 @@ func ftsMatch(terms []string) string {
 }
 
 func tokenize(value string) []string {
-	words := strings.FieldsFunc(strings.ToLower(value), func(character rune) bool {
+	words := strings.FieldsFunc(foldDiacritics(strings.ToLower(value)), func(character rune) bool {
 		return !(unicode.IsLetter(character) || unicode.IsDigit(character))
 	})
 	filtered := make([]string, 0, len(words))
@@ -274,6 +275,18 @@ func tokenize(value string) []string {
 		}
 	}
 	return filtered
+}
+
+func foldDiacritics(value string) string {
+	decomposed := norm.NFD.String(value)
+	folded := make([]rune, 0, len(decomposed))
+	for _, character := range decomposed {
+		if unicode.Is(unicode.Mn, character) {
+			continue
+		}
+		folded = append(folded, character)
+	}
+	return norm.NFC.String(string(folded))
 }
 
 func tokenSet(value string) map[string]bool {

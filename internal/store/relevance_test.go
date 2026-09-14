@@ -157,3 +157,24 @@ func contents(memories []model.Memory) string {
 	}
 	return joined
 }
+
+func TestPromptWithNoSearchableTermsRecallsNothing(t *testing.T) {
+	database := seeded(t, map[string]string{
+		"recent": "the deploy pipeline was rebuilt last week",
+	})
+	if results := search(t, database, "what should we do about this", 0.5); len(results) != 0 {
+		t.Fatalf("stop-word-only prompt fell back to recent memories: %s", contents(results))
+	}
+	if results := search(t, database, "?!", 0.5); len(results) != 0 {
+		t.Fatalf("termless prompt fell back to recent memories: %s", contents(results))
+	}
+}
+
+func TestDiacriticsFoldLikeTheSearchIndex(t *testing.T) {
+	database := seeded(t, map[string]string{
+		"cafe": "the cafe deployment runs in Zurich",
+	})
+	if results := search(t, database, "café", 0.5); len(results) != 1 {
+		t.Fatalf("accented term did not count toward coverage: %s", contents(results))
+	}
+}

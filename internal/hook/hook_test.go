@@ -326,3 +326,72 @@ func TestWeakPromptMatchIsNotInjected(t *testing.T) {
 		t.Fatalf("weak match was injected: %s", output.String())
 	}
 }
+
+func TestStopWordOnlyPromptIsNotInjected(t *testing.T) {
+	appPaths := testPaths(t)
+	if err := appPaths.Ensure(); err != nil {
+		t.Fatal(err)
+	}
+	database, err := store.Open(appPaths.Database)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resolved := project.Resolve(t.TempDir())
+	if _, err := database.Remember(model.Memory{
+		ProjectID: resolved.ID, Kind: "fact", Content: "the deploy pipeline was rebuilt last week",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	database.Close()
+
+	var output bytes.Buffer
+	input := hookInput("UserPromptSubmit", resolved.Root, map[string]any{"prompt": "what should we do about this"})
+	Execute("codex", "UserPromptSubmit", bytes.NewReader(input), &output, appPaths)
+	if output.Len() != 0 {
+		t.Fatalf("stop-word-only prompt injected memories: %s", output.String())
+	}
+}
+
+func TestMemoriesDroppedByTruncationAreOfferedAgain(t *testing.T) {
+	appPaths := testPaths(t)
+	if err := appPaths.Ensure(); err != nil {
+		t.Fatal(err)
+	}
+	database, err := store.Open(appPaths.Database)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resolved := project.Resolve(t.TempDir())
+	stored := []string{}
+	for index := 0; index < promptRecallLimit; index++ {
+		memory, rememberErr := database.Remember(model.Memory{
+			ProjectID: resolved.ID, Kind: "fact",
+			Content: fmt.Sprintf("clickhouse reader grant %d %s", index, strings.Repeat("detail ", 220)),
+		})
+		if rememberErr != nil {
+			t.Fatal(rememberErr)
+		}
+		stored = append(stored, memory.ID)
+	}
+	database.Close()
+
+	prompt := map[string]any{"prompt": "clickhouse reader grant detail"}
+	var first, second bytes.Buffer
+	Execute("codex", "UserPromptSubmit", bytes.NewReader(hookInput("UserPromptSubmit", resolved.Root, prompt)), &first, appPaths)
+	Execute("codex", "UserPromptSubmit", bytes.NewReader(hookInput("UserPromptSubmit", resolved.Root, prompt)), &second, appPaths)
+
+	shown := 0
+	for _, id := range stored {
+		if strings.Contains(first.String(), id) {
+			shown++
+		}
+	}
+	if shown == 0 || shown == len(stored) {
+		t.Fatalf("expected truncation to drop some of %d memories, rendered %d", len(stored), shown)
+	}
+	for _, id := range stored {
+		if !strings.Contains(first.String(), id) && !strings.Contains(second.String(), id) {
+			t.Fatalf("memory %s was recorded as injected but never rendered", id)
+		}
+	}
+}
