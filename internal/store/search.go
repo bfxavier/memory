@@ -21,7 +21,6 @@ SELECT id, project_id, kind, state, content, confidence,
 FROM memories`
 
 const (
-	weightCoverage   = 1.0
 	weightLexical    = 0.3
 	weightConfidence = 0.2
 	weightRecency    = 0.2
@@ -268,10 +267,13 @@ func rank(candidates []model.Memory, options model.SearchOptions, limit int) []m
 		if candidate.Coverage < options.MinCoverage {
 			continue
 		}
-		candidate.Score = relevance(candidate, candidate.Coverage, maxLexical, now)
+		candidate.Score = relevance(candidate, maxLexical, options.ProjectID, now)
 		ranked = append(ranked, candidate)
 	}
 	sort.SliceStable(ranked, func(first, second int) bool {
+		if ranked[first].Coverage != ranked[second].Coverage {
+			return ranked[first].Coverage > ranked[second].Coverage
+		}
 		return ranked[first].Score > ranked[second].Score
 	})
 	if len(ranked) > limit {
@@ -280,14 +282,14 @@ func rank(candidates []model.Memory, options model.SearchOptions, limit int) []m
 	return ranked
 }
 
-func relevance(memory model.Memory, matched, maxLexical float64, now time.Time) float64 {
-	score := weightCoverage * matched
+func relevance(memory model.Memory, maxLexical float64, requestedProject string, now time.Time) float64 {
+	score := 0.0
 	if maxLexical > 0 {
 		score += weightLexical * clampUnit(memory.Score/maxLexical)
 	}
 	score += weightConfidence * clampUnit(memory.Confidence)
 	score += weightRecency * decay(now.Sub(memory.UpdatedAt))
-	if memory.ProjectID != "" {
+	if requestedProject != "" && memory.ProjectID == requestedProject {
 		score += weightProject
 	}
 	return score

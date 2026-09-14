@@ -449,7 +449,7 @@ func TestRenderedContextStaysWithinTheByteBudget(t *testing.T) {
 			Content: strings.Repeat("wide ", maxContextBytes),
 		})
 	}
-	contextText, rendered := renderContext(memories)
+	contextText, rendered, _ := renderContext(memories)
 	if len(contextText) > maxContextBytes {
 		t.Fatalf("context = %d bytes, budget %d", len(contextText), maxContextBytes)
 	}
@@ -627,5 +627,33 @@ func TestAbandonedSessionStateIsSweptByAge(t *testing.T) {
 	Execute("codex", "SessionEnd", bytes.NewReader(hookInput("SessionEnd", t.TempDir(), nil)), io.Discard, appPaths)
 	if _, err := os.Stat(abandoned); !os.IsNotExist(err) {
 		t.Fatalf("stale session state survived the sweep: %v", err)
+	}
+}
+
+func TestSessionStartStaysSilentWhenTheDigestCannotBeComplete(t *testing.T) {
+	appPaths := testPaths(t)
+	if err := appPaths.Ensure(); err != nil {
+		t.Fatal(err)
+	}
+	database, err := store.Open(appPaths.Database)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resolved := project.Resolve(t.TempDir())
+	if _, err := database.Remember(model.Memory{
+		ProjectID: resolved.ID, Kind: "fact",
+		Content: "clickhouse reader grant " + strings.Repeat("detail ", maxContextBytes),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	database.Close()
+
+	var output bytes.Buffer
+	Execute("codex", "SessionStart", bytes.NewReader(hookInput("SessionStart", resolved.Root, nil)), &output, appPaths)
+	if output.Len() != 0 {
+		t.Fatalf("start digest emitted a truncated memory as if complete: %s", output.String())
+	}
+	if entries, _ := os.ReadDir(filepath.Join(appPaths.Home, "recall")); len(entries) != 0 {
+		t.Fatalf("a memory the model never fully saw was recorded as injected")
 	}
 }

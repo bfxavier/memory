@@ -355,3 +355,45 @@ func TestCoveringRowsKeepsEveryQualifyingRow(t *testing.T) {
 		t.Fatal("an excluded row qualified")
 	}
 }
+
+func TestNoSecondaryFactorCanBeatHigherCoverage(t *testing.T) {
+	database := open(t)
+	full := remember(t, database, model.Memory{
+		ProjectID: project, Kind: "fact", Confidence: 0.05,
+		Content: "clickhouse reader grant",
+	})
+	age(t, database, full.ID, time.Now().Add(-5*365*24*time.Hour))
+	partial := remember(t, database, model.Memory{
+		ProjectID: project, Kind: "fact", Confidence: 1,
+		Content: strings.Repeat("clickhouse reader ", 40),
+	})
+	results := search(t, database, "clickhouse reader grant", 0.5)
+	if len(results) != 2 {
+		t.Fatalf("expected both candidates, got %s", contents(results))
+	}
+	if results[0].ID != full.ID {
+		t.Fatalf("a newer, more confident, term-repeating 2/3 match outranked the full match: %s", contents(results))
+	}
+	if results[1].ID != partial.ID {
+		t.Fatalf("unexpected second result: %s", contents(results))
+	}
+}
+
+func TestAllProjectSearchDoesNotBoostProjectMemories(t *testing.T) {
+	database := open(t)
+	remember(t, database, model.Memory{
+		ProjectID: project, Kind: "fact", Confidence: 0.7,
+		Content: "clickhouse reader grant for one project",
+	})
+	global := remember(t, database, model.Memory{
+		Kind: "fact", Confidence: 1, Content: "clickhouse reader grant globally",
+	})
+	results, err := database.Search(context.Background(), "clickhouse reader grant",
+		model.SearchOptions{Limit: 10, MinCoverage: 0.5})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != 2 || results[0].ID != global.ID {
+		t.Fatalf("an unrequested project outranked a more confident global memory: %s", contents(results))
+	}
+}

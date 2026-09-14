@@ -188,7 +188,7 @@ V1 uses SQLite FTS5 plus deterministic ranking:
 score = term coverage + lexical relevance + confidence + project match + recency decay + user-pinned boost
 ```
 
-Term coverage is the fraction of the prompt's searchable terms a memory carries, and it leads the sum: FTS5 matches any one term, so without it a memory sharing a single common word outranks one sharing every word. It is also the floor. The user-pinned boost is not built, because no pin exists yet.
+Term coverage is the fraction of the prompt's searchable terms a memory carries, and it orders the result before the sum is consulted at all: FTS5 matches any one term, so without it a memory sharing a single common word outranks one sharing every word. It is also the floor. The user-pinned boost is not built, because no pin exists yet.
 
 Return a small diversified set. Avoid injecting five versions of the same fact. Track injected memory IDs per session so context is not repeated.
 
